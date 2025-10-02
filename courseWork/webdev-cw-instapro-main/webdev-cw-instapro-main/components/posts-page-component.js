@@ -3,61 +3,97 @@ import { renderHeaderComponent } from "./header-component.js";
 import { posts, goToPage, user } from "../index.js";
 import { likePost, dislikePost } from "../api.js";
 
-export function renderPostsPageComponent({ appEl, userId }) {
-  console.log("Актуальный список постов:", posts);
+export function renderPostsPageComponent({ appEl }) {
+  console.log("🔄 Рендерим страницу постов");
 
-  // Фильтруем посты если передан userId
-  const displayedPosts = userId
-    ? posts.filter((post) => post.user.id === userId)
-    : posts;
+  const currentUser = user || JSON.parse(localStorage.getItem("user"));
+  console.log("👤 Текущий пользователь для лайков:", {
+    id: currentUser?.id,
+    _id: currentUser?._id,
+    name: currentUser?.name,
+  });
 
-  // Получаем данные пользователя для заголовка (если это страница пользователя)
-  const userData =
-    userId && displayedPosts.length > 0 ? displayedPosts[0].user : null;
+  // Детальный анализ определения лайков
+  posts.forEach((post, index) => {
+    const isLiked =
+      currentUser && post.likes
+        ? post.likes.some((like) => {
+            const likeUserId = like.id || like._id;
+            const currentUserId = currentUser.id || currentUser._id;
+            const match = likeUserId === currentUserId;
+
+            console.log(`🔍 Пост "${post.description.substring(0, 30)}...":`, {
+              likeUserId: likeUserId,
+              currentUserId: currentUserId,
+              match: match,
+              likeObject: like,
+            });
+
+            return match;
+          })
+        : false;
+
+    console.log(`🎯 Итог для поста ${index + 1}:`, {
+      description: post.description.substring(0, 30) + "...",
+      likesCount: post.likes ? post.likes.length : 0,
+      isLiked: isLiked,
+      postId: post.id,
+    });
+  });
 
   const appHtml = `
     <div class="page-container">
       <div class="header-container"></div>
-      ${
-        userData
-          ? `
-        <div class="posts-user-header">
-          <img src="${userData.imageUrl}" class="posts-user-header__user-image">
-          <p class="posts-user-header__user-name">${userData.name}</p>
-        </div>
-      `
-          : ""
-      }
       <ul class="posts">
-        ${displayedPosts
+        ${posts
           .map((post) => {
-            const isLiked = user
-              ? post.likes.some((like) => like.id === user.id)
-              : false;
+            // ВАЖНО: Правильное определение лайка
+            const isLiked =
+              currentUser && post.likes
+                ? post.likes.some((like) => {
+                    const likeUserId = like.id || like._id;
+                    const currentUserId = currentUser.id || currentUser._id;
+                    return likeUserId === currentUserId;
+                  })
+                : false;
+
+            const likesCount = post.likes ? post.likes.length : 0;
             const timeAgo = formatTimeAgo(new Date(post.createdAt));
+
+            console.log(
+              `🎨 Рендерим пост "${post.description.substring(
+                0,
+                30
+              )}...": isLiked = ${isLiked}`
+            );
 
             return `
           <li class="post" data-post-id="${post.id}">
             <div class="post-header" data-user-id="${post.user.id}">
-              <img src="${post.user.imageUrl}" class="post-header__user-image">
-              <p class="post-header__user-name">${post.user.name}</p>
+                <img src="${
+                  post.user.imageUrl
+                }" class="post-header__user-image" onerror="handleImageError(this)">
+                <p class="post-header__user-name">${post.user.name}</p>
             </div>
             <div class="post-image-container">
-              <img class="post-image" src="${post.imageUrl}">
+              <img class="post-image" src="${
+                post.imageUrl
+              }" onerror="handleImageError(this)">
             </div>
             <div class="post-likes">
               <button data-post-id="${post.id}" class="like-button">
                 <img src="./assets/images/like-${
                   isLiked ? "active" : "not-active"
-                }.svg">
+                }.svg" 
+                     alt="${isLiked ? "Убрать лайк" : "Поставить лайк"}">
               </button>
               <p class="post-likes-text">
-                Нравится: <strong>${post.likes.length}</strong>
+                Нравится: <strong>${likesCount}</strong>
               </p>
             </div>
             <p class="post-text">
               <span class="user-name">${post.user.name}</span>
-              ${escapeHtml(post.description)}
+              ${post.description}
             </p>
             <p class="post-date">
               ${timeAgo}
@@ -66,11 +102,6 @@ export function renderPostsPageComponent({ appEl, userId }) {
         `;
           })
           .join("")}
-        ${
-          displayedPosts.length === 0
-            ? '<p class="no-posts">Постов пока нет</p>'
-            : ""
-        }
       </ul>
     </div>`;
 
@@ -80,58 +111,89 @@ export function renderPostsPageComponent({ appEl, userId }) {
     element: document.querySelector(".header-container"),
   });
 
-  // Обработчики для лайков
+  // Обработчики лайков
   document.querySelectorAll(".like-button").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
+    button.addEventListener("click", () => {
+      const currentUser = user || JSON.parse(localStorage.getItem("user"));
+      const currentUserId = currentUser?.id || currentUser?._id;
 
-      if (!user) {
+      if (!currentUser) {
         alert("Нужно авторизоваться чтобы ставить лайки");
         return;
       }
 
       const postId = button.dataset.postId;
-      const postElement = button.closest(".post");
-      const likesText = postElement.querySelector(".post-likes-text strong");
       const likeImg = button.querySelector("img");
+      const likesText = button
+        .closest(".post-likes")
+        .querySelector(".post-likes-text strong");
 
-      const post = posts.find((p) => p.id === postId);
-      if (!post) return;
+      const postIndex = posts.findIndex((p) => p.id === postId);
+      if (postIndex === -1) return;
 
-      const isLiked = post.likes.some((like) => like.id === user.id);
+      const post = posts[postIndex];
 
-      // Оптимистичное обновление UI
-      if (isLiked) {
-        post.likes = post.likes.filter((like) => like.id !== user.id);
-        likesText.textContent = post.likes.length;
-        likeImg.src = "./assets/images/like-not-active.svg";
-
-        dislikePost({ token: `Bearer ${user.token}`, postId }).catch(
-          (error) => {
-            console.error("Ошибка при удалении лайка:", error);
-            // Откатываем изменения при ошибке
-            post.likes.push(user);
-            likesText.textContent = post.likes.length;
-            likeImg.src = "./assets/images/like-active.svg";
-          }
+      // Детальная проверка перед действием
+      const isCurrentlyLiked = post.likes.some((like) => {
+        const likeUserId = like.id || like._id;
+        const match = likeUserId === currentUserId;
+        console.log(
+          `🖱️ Проверка перед кликом: like ${likeUserId} vs user ${currentUserId} = ${match}`
         );
-      } else {
-        post.likes.push(user);
-        likesText.textContent = post.likes.length;
-        likeImg.src = "./assets/images/like-active.svg";
+        return match;
+      });
 
-        likePost({ token: `Bearer ${user.token}`, postId }).catch((error) => {
-          console.error("Ошибка при добавлении лайка:", error);
-          // Откатываем изменения при ошибке
-          post.likes = post.likes.filter((like) => like.id !== user.id);
-          likesText.textContent = post.likes.length;
-          likeImg.src = "./assets/images/like-not-active.svg";
-        });
+      const currentLikesCount = post.likes.length;
+
+      console.log("🎯 Перед действием:", {
+        postId,
+        isCurrentlyLiked,
+        currentLikesCount,
+        currentUserId,
+      });
+
+      if (isCurrentlyLiked) {
+        // Убираем лайк
+        likesText.textContent = currentLikesCount - 1;
+        likeImg.src = "./assets/images/like-not-active.svg";
+        console.log("➖ Убираем лайк");
+
+        dislikePost({ token: `Bearer ${currentUser.token}`, postId })
+          .then((response) => {
+            console.log("✅ Сервер подтвердил удаление лайка");
+            if (response && response.post) {
+              posts[postIndex] = response.post;
+              console.log("🔄 Обновили пост в массиве");
+            }
+          })
+          .catch((error) => {
+            console.error("❌ Ошибка:", error);
+            likesText.textContent = currentLikesCount;
+            likeImg.src = "./assets/images/like-active.svg";
+          });
+      } else {
+        // Ставим лайк
+        likesText.textContent = currentLikesCount + 1;
+        likeImg.src = "./assets/images/like-active.svg";
+        console.log("➕ Ставим лайк");
+
+        likePost({ token: `Bearer ${currentUser.token}`, postId })
+          .then((response) => {
+            console.log("✅ Сервер подтвердил добавление лайка");
+            if (response && response.post) {
+              posts[postIndex] = response.post;
+              console.log("🔄 Обновили пост в массиве");
+            }
+          })
+          .catch((error) => {
+            console.error("❌ Ошибка:", error);
+            likesText.textContent = currentLikesCount;
+            likeImg.src = "./assets/images/like-not-active.svg";
+          });
       }
     });
   });
 
-  // Обработчики для перехода на страницу пользователя
   document.querySelectorAll(".post-header").forEach((userEl) => {
     userEl.addEventListener("click", () => {
       goToPage(USER_POSTS_PAGE, {
@@ -141,7 +203,6 @@ export function renderPostsPageComponent({ appEl, userId }) {
   });
 }
 
-// Вспомогательная функция для форматирования времени
 function formatTimeAgo(date) {
   const now = new Date();
   const diffInSeconds = Math.floor((now - date) / 1000);
@@ -158,15 +219,4 @@ function formatTimeAgo(date) {
     const days = Math.floor(diffInSeconds / 86400);
     return `${days} дней назад`;
   }
-}
-
-// Вспомогательная функция для экранирования HTML
-function escapeHtml(unsafe) {
-  if (!unsafe) return "";
-  return unsafe
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
